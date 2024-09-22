@@ -67,6 +67,7 @@ veriler = None
 connected = False
 last_coor = [None, None]
 hedef_coor = [0.0, 0.0]  # Akıllı saatten gelen konum bilgisi.
+ev_coor = [None, None]  # Başlangıç konumu
 url = "https://api.thingspeak.com/channels/2461285/feeds.json?api_key=E7EEPQ5DCR5IVD46&results=1"
 map_url = "map.html"
 
@@ -155,7 +156,7 @@ def zamanlayici(iha_to_go, gidis_yonu):
                     print("Destek fonksiyonu tamamlandı.")
                 elif gidis_yonu == 1:
                     print("donus basladı")
-                    destek_donus(hedef_coor[0], hedef_coor[1])
+                    destek_donus()
 
             elif iha_to_go == 0:
                 if not veri_yaz:
@@ -165,11 +166,7 @@ def zamanlayici(iha_to_go, gidis_yonu):
                     ui.mesajlarList.addItem(f"{dt.now().strftime('%H.%M.%S')} =>  İmha verileri yazdırılmaya başlandı.")
 
                 print("İmha verileri yazdırılmaya başlandı.")
-                if gidis_yonu == 0:
-                    imha()
-                    print("İmha fonksiyonu tamamlandı.")
-                elif gidis_yonu == 1:
-                    imha_donus(hedef_coor[0], hedef_coor[1])
+                imha(hedef_coor[0], hedef_coor[1])
 
 
             timer.stop()
@@ -562,7 +559,7 @@ class DestekThread(QThread):
         self.hedef_lon = hedef_lon
 
     def run(self):
-        global destek_iha, iha_gorevde, veriler
+        global destek_iha, iha_gorevde, veriler, ev_coor
         try:
             ui.durdurBtn.setEnabled(False)
             iha_gorevde = True
@@ -577,21 +574,11 @@ class DestekThread(QThread):
                     "latitude": self.hedef_lat,
                     "longitude": self.hedef_lon,
                     "altitude": 10
-                },
-                {
-                    "location_name": "home_location",
-                    "latitude": veriler.lat,
-                    "longitude": veriler.long,
-                    "altitude": 10
-
                 }
             ]
 
-            # Bağlantı oluşturma
-            # master = "udpin:0.0.0.0:14550"  # Simülasyon
-            # # master = "/dev/ttyUSB0" # Gerçek uçak
-            # destek_iha = utility.mavlink_connection(master, baud=115200, autoreconnect=True)
-
+            ev_coor[0] = veriler.lat
+            ev_coor[1] = veriler.long
             print("Bağlandı")
 
             # Arm komutu gönderme
@@ -642,25 +629,18 @@ class DestekThread(QThread):
 
 class DestekDonusThread(QThread):
     def run(self):
-        global destek_iha, veriler, hedef_coor, is_finished
+        global destek_iha, veriler, hedef_coor, is_finished, ev_coor
         try:
             print("Destek thread başladı")
             TARGET_LOCATIONS = [
                 {
-                    "location_name": "help_location",
-                    "latitude": -35.36042594,
-                    "longitude": 149.16125545,
-                    "altitude": 10
-                },
-                {
                     "location_name": "home_location",
-                    "latitude": -35.36336753,
-                    "longitude": 149.16523741,
+                    "latitude": ev_coor[0],
+                    "longitude": ev_coor[1],
                     "altitude": 10
-
                 }
             ]
-            print(f"ev konumu: ({veriler.lat, veriler.long})")
+            print(f"ev konumu: ({ev_coor[0], ev_coor[1]})")
 
             # # Bağlantı oluşturma
             # master = "udpin:0.0.0.0:14550"  # Simülasyon
@@ -694,9 +674,9 @@ class DestekDonusThread(QThread):
                                                                0, dialect.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
                                                                dialect.MAV_CMD_NAV_WAYPOINT,
                                                                2, 0, 0, 0, 0, 0,
-                                                               x=int(TARGET_LOCATIONS[1]["latitude"] * 1e7),
-                                                               y=int(TARGET_LOCATIONS[1]["longitude"] * 1e7),
-                                                               z=TARGET_LOCATIONS[1]["altitude"]
+                                                               x=int(TARGET_LOCATIONS[0]["latitude"] * 1e7),
+                                                               y=int(TARGET_LOCATIONS[0]["longitude"] * 1e7),
+                                                               z=TARGET_LOCATIONS[0]["altitude"]
                                                                )
 
             # Görev öğesini uçuş denetleyicisine gönderme
@@ -715,22 +695,33 @@ class DestekDonusThread(QThread):
 class ImhaThread(QThread):
     progress = pyqtSignal(tuple)
     finished = pyqtSignal()
+    def __init__(self, ui, hedef_lat, hedef_lon):
+        super().__init__()
+        self.ui = ui
+        self.hedef_lat = hedef_lat
+        self.hedef_lon = hedef_lon
 
     def run(self):
-        global iha, iha_gorevde, hedef_coor
+        global imha_iha, iha_gorevde
         try:
-            ui.durdurBtn.setEnabled(False)
+            self.ui.durdurBtn.setEnabled(False)
             iha_gorevde = True
+            while imha_iha is None or veriler is None:
+                print("destek bağlantı bekleniyor.")
+                time.sleep(1)
             # İmha kodları buraya gelecek
             TARGET_LOCATIONS = [
                 {
                     "location_name": "help_location",
-                    "latitude": -35.35948049,
-                    "longitude": 149.16412228,
+                    "latitude": self.hedef_lat,
+                    "longitude": self.hedef_lon,
                     "altitude": 10,
                 },
 
             ]
+
+            ev_coor[0] = veriler.lat
+            ev_coor[1] = veriler.long
             while imha_iha is None or veriler is None:
                 print("imha bağlantı bekleniyor.")
                 time.sleep(1)
@@ -773,11 +764,7 @@ class ImhaThread(QThread):
             for location in TARGET_LOCATIONS:
                 print(location)
 
-            # # Bağlantı oluşturma
-            # master = "udpin:0.0.0.0:14550"  # Simülasyon
-            # # master = "/dev/ttyUSB0" # Gerçek uçak
-            # imha_iha = utility.mavlink_connection(master, baud=115200, autoreconnect=True)
-            # imha_iha.wait_heartbeat()
+
             print("Bağlandı")
 
             # Arm komutu gönderme
@@ -891,11 +878,6 @@ class ImhaThread(QThread):
         self.finished.emit()
         iha_gorevde = False
         ui.durdurBtn.setEnabled(True)
-
-
-class ImhaDonusThread(QThread):
-    def run(self):
-        pass
 
 
 
@@ -1087,10 +1069,10 @@ if __name__ == "__main__":
         except Exception as err:
             print(f"Destek Thread oluşturma hatası {err}")
 
-    def destek_donus(latx, lonx):
+    def destek_donus():
         try:
             ui.destek_donus_thread = QThread()
-            ui.destek_donus_worker = DestekThread(latx, lonx)
+            ui.destek_donus_worker = DestekDonusThread()
             ui.destek_donus_worker.moveToThread(ui.destek_donus_thread)
             ui.destek_donus_worker.finished.connect(ui.destek_donus_thread.quit)
             ui.destek_donus_worker.finished.connect(ui.destek_donus_worker.deleteLater)
@@ -1100,10 +1082,10 @@ if __name__ == "__main__":
         except Exception as err:
             print(f"Destek Donus Thread oluşturma hatası {err}")
 
-    def imha():
+    def imha(latx, lony):
         try:
             ui.imha_thread = QThread()
-            ui.imha_worker = ImhaThread(ui)
+            ui.imha_worker = ImhaThread(ui, latx, lony)
             ui.imha_worker.moveToThread(ui.imha_thread)
             # ui.imha_worker.progress.connect(iha_move)
             ui.imha_worker.finished.connect(ui.imha_thread.quit)
@@ -1115,18 +1097,6 @@ if __name__ == "__main__":
             print(f"İmha Thread oluşturma hatası{err}")
 
 
-    def imha_donus(latx, lonx):
-        try:
-            ui.imha_donus_thread = QThread()
-            ui.imha_donus_worker = ImhaThread(ui)
-            ui.imha_donus_worker.moveToThread(ui.imha_donus_thread)
-            ui.imha_donus_worker.finished.connect(ui.imha_donus_thread.quit)
-            ui.imha_donus_worker.finished.connect(ui.imha_donus_worker.deleteLater)
-            ui.imha_donus_thread.finished.connect(ui.imha_donus_thread.deleteLater)
-            ui.imha_donus_thread.started.connect(ui.imha_donus_worker.run)
-            ui.imha_donus_thread.start()
-        except Exception as err:
-            print(f"Imha Donus Thread oluşturma hatası {err}")
 
     # Add the smartwatch messages thread to qt
     try:
